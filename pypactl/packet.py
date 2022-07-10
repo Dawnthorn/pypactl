@@ -107,6 +107,12 @@ class Packet:
             return False
 
 
+    def get_arbitrary(self):
+        self.check_tag(Tag.ARBITRARY)
+        length = self.consume_u32()
+        return self.consume(length)
+
+
     def get_channel_map(self):
         self.check_tag(Tag.CHANNEL_MAP)
         channel_map = ChannelMap()
@@ -121,7 +127,7 @@ class Packet:
         cvolume = Cvolume()
         num_channels = self.consume_u8()
         for i in range(0, num_channels):
-            cvolume.channels.append(self.consume_u8())
+            cvolume.channels.append(self.consume_u32())
         return cvolume
 
 
@@ -139,7 +145,7 @@ class Packet:
         while self.data[0] != Tag.STRING_NULL:
             key = self.get_string()
             length = self.get_u32()
-            data = self.get_arbitrary(length)
+            data = self.get_arbitrary()
             proplist[key] = data
         self.consume(1)
         return proplist
@@ -163,13 +169,17 @@ class Packet:
                 break
         value = self.consume(eos_index + 1)
         value = value[:-1]
-        logger.debug(f"Bif: {value.tobytes()}")
         return value.tobytes().decode('UTF-8')
 
 
     def get_u32(self):
         self.check_tag(Tag.U32)
-        return self.get('!I')[0]
+        return self.consume_u32()
+
+
+    def get_u8(self):
+        self.check_tag(Tag.U8)
+        return self.consume_u8()
 
 
     def get_usec(self):

@@ -16,7 +16,6 @@ from pypactl.subscription_mask import SubscriptionMask
 from pypactl.tag import Tag
 
 class NativeProtocol(asyncio.Protocol):
-    AUTH_STRUCT = '!BIBIBIBI'
     FRAME_STRUCT = '!IIIII'
 
     def __init__(self, on_connection_lost, logger = logging.getLogger('pypactl')):
@@ -27,6 +26,7 @@ class NativeProtocol(asyncio.Protocol):
         self.on_connection_lost = on_connection_lost
         self.current_packet_handler = self.handle_auth_reply
         self.logger = logger
+        self.protocol_version = Protocol.VERSION
 
 
     def connection_lost(self, exception):
@@ -66,8 +66,8 @@ class NativeProtocol(asyncio.Protocol):
 
     def handle_auth_reply(self, packet):
         self.logger.debug("handle_auth_reply")
-        version = packet.get_u32()
-        self.logger.debug(f"PulseAudio Server Protocol Version: {version}")
+        self.protocol_version = packet.get_u32()
+        self.logger.debug(f"PulseAudio Server Protocol Version: {self.protocol_version}")
         self.send_properties()
 
 
@@ -84,44 +84,40 @@ class NativeProtocol(asyncio.Protocol):
             sink_info = SinkInfo()
             sink_info.index = packet.get_u32()
             sink_info.name = packet.get_string()
-            self.logger.debug(f"name: {sink_info.name}")
-            self.logger.debug(f"Foo: {packet.data.tobytes()}")
             sink_info.description = packet.get_string()
-            self.logger.debug(f"description: {sink_info.description}")
             sink_info.sample_spec = packet.get_sample_spec()
-            self.logger.debug(f"sample_spec: {sink_info.sample_spec}")
             sink_info.channel_map = packet.get_channel_map()
-            self.logger.debug(f"channel_map {sink_info.channel_map}")
             sink_info.owner_module = packet.get_u32()
-            self.logger.debug(f"owner_module {sink_info.owner_module}")
             sink_info.volume = packet.get_cvolume()
-            self.logger.debug(f"volue: {sink_info.volume}")
             sink_info.mute = packet.get_boolean()
             sink_info.monitor_source = packet.get_u32()
             sink_info.monitor_source_name = packet.get_string()
             sink_info.latency = packet.get_usec()
             sink_info.driver = packet.get_string()
             sink_info.flags = packet.get_u32()
-            sink_info.proplist = packet.get_proplist()
-            sink_info.configured_latency = packet.get_usec()
-            sink_info.base_volume = packet.get_volume()
-            sink_info.state = packet.get_u32()
-            sink_info.n_volume_steps = packet.get_u32()
-            sink_info.card = packet.get_u32()
-            sink_info.n_ports = packet.get_u32()
-            sink_info.ports = []
-            if sink_info.n_ports > 0:
-                for i in range(0, sink_info.n_ports):
-                    sink_port_info = SinkPortInfo()
-                    sink_port_info.name = packet.get_string()
-                    sink_port_info.description = packet.get_string()
-                    sink_port_info.priority = packet.get_u32()
-                    sink_port_info.available = packet.get_u32()
-                sink_info.ap = packet.get_string()
-            n_formats = packet.get_u8()
-            for i in range(0, n_formats):
-                format_info = packet.get_format_info()
-            self.logger.debug(sink_info)
+            if self.protocol_version >= 13:
+                sink_info.proplist = packet.get_proplist()
+                sink_info.configured_latency = packet.get_usec()
+            if self.protocol_version >= 15:
+                sink_info.base_volume = packet.get_volume()
+                sink_info.state = packet.get_u32()
+                sink_info.n_volume_steps = packet.get_u32()
+                sink_info.card = packet.get_u32()
+                sink_info.n_ports = packet.get_u32()
+            if self.protocol_version >= 16:
+                sink_info.ports = []
+                if sink_info.n_ports > 0:
+                    for i in range(0, sink_info.n_ports):
+                        sink_port_info = SinkPortInfo()
+                        sink_port_info.name = packet.get_string()
+                        sink_port_info.description = packet.get_string()
+                        sink_port_info.priority = packet.get_u32()
+                        sink_port_info.available = packet.get_u32()
+                    sink_info.ap = packet.get_string()
+            if self.protocol_version >= 21:
+                n_formats = packet.get_u8()
+                for i in range(0, n_formats):
+                    format_info = packet.get_format_info()
             sink_infos.append(sink_info)
         self.logger.debug(f"SinkInfos: {sink_infos}")
 

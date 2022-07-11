@@ -21,6 +21,7 @@ class SinkInfo:
         self.ports = None
         self.ap = None
         self.formats = None
+        self.active_port = None
 
 
     def __repr__(self):

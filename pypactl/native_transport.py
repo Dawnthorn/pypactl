@@ -1,8 +1,11 @@
 import asyncio.selector_events
+import logging
 import socket
 
 class NativeTransport(asyncio.selector_events._SelectorSocketTransport):
-    def __init__(self, loop, sock, protocol, waiter=None, extra=None, server=None):
+    def __init__(self, loop, sock, protocol, waiter=None, extra=None, server=None, path=None, logger=logging.getLogger('pypactl')):
+        self.path = path
+        self.logger = logger
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
         super().__init__(loop, sock, protocol, waiter, extra, server)
 

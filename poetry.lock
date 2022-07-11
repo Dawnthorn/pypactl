@@ -1,0 +1,17 @@
+[[package]]
+name = "aioconsole"
+version = "0.5.0"
+description = "Asynchronous console and interfaces for asyncio"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[metadata]
+lock-version = "1.1"
+python-versions = "^3.10"
+content-hash = "42fbe532fdb96066892e2f8ac57b09e0081956ad1921e403204d9c9e429bfa8d"
+
+[metadata.files]
+aioconsole = [
+    {file = "aioconsole-0.5.0.tar.gz", hash = "sha256:9b719b270e7cf6f2454eeaf16c20a025b73f0d4d352d157baa77ce9ad1df427d"},
+]

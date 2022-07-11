@@ -15,7 +15,7 @@ class Packet:
     def __init__(self, data = b''):
         self.data = data
         self.command = None
-        self.index = None
+        self.id = None
 
 
     def __repr__(self):
@@ -23,7 +23,7 @@ class Packet:
         data = self.data
         if isinstance(data, memoryview):
             data = self.data.tobytes()
-        return f"<PulseAudioPacket data={data} command={self.command} index={self.index}>"
+        return f"<PulseAudioPacket data={data} command={self.command} id={self.id}>"
 
 
     def add_arbitrary(self, data):
@@ -37,9 +37,9 @@ class Packet:
         self.add_u32(command)
 
 
-    def add_index(self, index):
-        self.index = index
-        self.add_u32(index)
+    def add_id(self, id):
+        self.id = id
+        self.add_u32(id)
 
 
     def add_property(self, key, value):
@@ -101,10 +101,12 @@ class Packet:
 
     def get_boolean(self):
         value = self.consume_u8()
-        if value:
+        if value == Tag.BOOLEAN_TRUE:
             return True
-        else:
+        elif value == Tag.BOOLEAN_FALSE:
             return False
+        else:
+            return -1
 
 
     def get_arbitrary(self):
@@ -145,7 +147,7 @@ class Packet:
         while self.data[0] != Tag.STRING_NULL:
             key = self.get_string()
             length = self.get_u32()
-            data = self.get_arbitrary()
+            data = self.get_arbitrary().tobytes().decode('UTF-8')
             proplist[key] = data
         self.consume(1)
         return proplist
@@ -194,4 +196,4 @@ class Packet:
 
     def parse_command(self):
         self.command = Command(self.get_u32())
-        self.index = self.get_u32()
+        self.id = self.get_u32()

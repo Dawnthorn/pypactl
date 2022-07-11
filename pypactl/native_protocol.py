@@ -9,6 +9,7 @@ import struct
 from pypactl.command import Command
 from pypactl.packet import Packet
 from pypactl.protocol import Protocol
+from pypactl.server_info import ServerInfo
 from pypactl.sink_info import SinkInfo
 from pypactl.sink_port_info import SinkPortInfo
 from pypactl.subscription_event_type import SubscriptionEventType
@@ -22,11 +23,11 @@ class NativeProtocol(asyncio.Protocol):
         self.buffer = memoryview(b'')
         self.expecting_frame = True
         self.expected_length = struct.calcsize(self.FRAME_STRUCT)
-        self.command_index = 0
+        self.command_id = 0
         self.on_connection_lost = on_connection_lost
-        self.current_packet_handler = self.handle_auth_reply
         self.logger = logger
-        self.protocol_version = Protocol.VERSION
+        self.version = Protocol.VERSION
+        self.reply_map = {}
 
 
     def connection_lost(self, exception):
@@ -48,8 +49,8 @@ class NativeProtocol(asyncio.Protocol):
     def create_command_packet(self, command):
         packet = Packet()
         packet.add_command(command)
-        packet.add_index(self.command_index)
-        self.command_index += 1
+        packet.add_id(self.command_id)
+        self.command_id += 1
         return packet
 
 
@@ -66,8 +67,8 @@ class NativeProtocol(asyncio.Protocol):
 
     def handle_auth_reply(self, packet):
         self.logger.debug("handle_auth_reply")
-        self.protocol_version = packet.get_u32()
-        self.logger.debug(f"PulseAudio Server Protocol Version: {self.protocol_version}")
+        self.version = packet.get_u32()
+        self.logger.debug(f"PulseAudio Server Protocol Version: {self.version}")
         self.send_properties()
 
 
@@ -95,16 +96,16 @@ class NativeProtocol(asyncio.Protocol):
             sink_info.latency = packet.get_usec()
             sink_info.driver = packet.get_string()
             sink_info.flags = packet.get_u32()
-            if self.protocol_version >= 13:
+            if self.version >= 13:
                 sink_info.proplist = packet.get_proplist()
                 sink_info.configured_latency = packet.get_usec()
-            if self.protocol_version >= 15:
+            if self.version >= 15:
                 sink_info.base_volume = packet.get_volume()
                 sink_info.state = packet.get_u32()
                 sink_info.n_volume_steps = packet.get_u32()
                 sink_info.card = packet.get_u32()
                 sink_info.n_ports = packet.get_u32()
-            if self.protocol_version >= 16:
+            if self.version >= 16:
                 sink_info.ports = []
                 if sink_info.n_ports > 0:
                     for i in range(0, sink_info.n_ports):
@@ -113,13 +114,20 @@ class NativeProtocol(asyncio.Protocol):
                         sink_port_info.description = packet.get_string()
                         sink_port_info.priority = packet.get_u32()
                         sink_port_info.available = packet.get_u32()
+                        sink_info.ports.append(sink_port_info)
                     sink_info.ap = packet.get_string()
-            if self.protocol_version >= 21:
+                    for sink_port_info in sink_info.ports:
+                        if sink_port_info.name == sink_info.ap:
+                            sink_info.active_port = sink_port_info
+            if self.version >= 21:
                 n_formats = packet.get_u8()
+                sink_info.formats = []
                 for i in range(0, n_formats):
                     format_info = packet.get_format_info()
+                    sink_info.formats.append(format_info)
             sink_infos.append(sink_info)
         self.logger.debug(f"SinkInfos: {sink_infos}")
+        return sink_infos
 
 
     def handle_packet(self, data):
@@ -128,27 +136,52 @@ class NativeProtocol(asyncio.Protocol):
         packet = Packet(data)
         packet.parse_command()
         self.logger.debug(f"Packet: {packet}")
-        if packet.command == Command.SUBSCRIBE_EVENT:
-            self.handle_subscribe_event(packet)
+        method_name = f"handle_command_{packet.command.name.lower()}"
+        method = getattr(self, method_name)
+        if callable(method):
+            method(packet)
         else:
-            if self.current_packet_handler is None:
-                self.logger.error(f"Received {packet}, but not expecting any.")
-            else:
-                self.current_packet_handler(packet)
+            self.logger.error(f"Unexpected packet: {packet}")
 
 
-    def handle_properties_reply(self, packet):
-        self.logger.debug("handle_properties_reply")
-        command_index = packet.get_u32()
-        self.send_get_sink_info_list()
-
-
-    def handle_subscribe_event(self, packet):
+    def handle_command_subscribe_event(self, packet):
         event_info = packet.get_u32()
         event_facility = SubscriptionEventType(event_info & SubscriptionEventType.FACILITY_MASK)
         event_type = SubscriptionEventType(event_info & SubscriptionEventType.TYPE_MASK)
         event_index = packet.get_u32()
         self.logger.debug(f"handle_subscribe_event {event_info} {event_type} {event_facility} {event_index}")
+
+
+    def handle_command_reply(self, packet):
+        method, future = self.reply_map.pop(packet.id, None)
+        if callable(method):
+            result = method(packet)
+            if future is not None:
+                future.set_result(result)
+        else:
+            self.logger.error(f"Recevied reply {packet}, but there's no matching id in the reply_map.")
+
+
+    def handle_properties_reply(self, packet):
+        self.logger.debug("handle_properties_reply")
+        command_id = packet.get_u32()
+
+
+    def handle_server_info_reply(self, packet):
+        self.logger.debug("handle_server_info_reply")
+        server_info = ServerInfo()
+        server_info.package_name = packet.get_string()
+        server_info.package_version = packet.get_string()
+        server_info.user_name = packet.get_string()
+        server_info.host_name = packet.get_string()
+        server_info.defalt_sample_spec = packet.get_sample_spec()
+        server_info.default_sink = packet.get_string()
+        server_info.default_source = packet.get_string()
+        server_info.cookie = packet.get_u32()
+        if self.version >= 15:
+            server_info.default_channel_map = packet.get_channel_map()
+        self.logger.debug(f"server_info: {server_info}")
+        return server_info
 
 
     def handle_subscribe_reply(self, packet):
@@ -186,12 +219,13 @@ class NativeProtocol(asyncio.Protocol):
         iov_data = struct.pack(self.FRAME_STRUCT, len(packet.data), 0xffffffff, 0, 0, 0)
         self.transport.sendmsg([iov_data], [(socket.SOL_SOCKET, socket.SCM_CREDENTIALS, cmsg_data)])
         self.transport.write(packet.data)
+        self.setup_reply(packet.id, self.handle_auth_reply)
 
 
-    def send_get_sink_info_list(self):
+    def send_get_sink_info_list(self, future = None):
         packet = self.create_command_packet(Command.GET_SINK_INFO_LIST)
         self.send_packet(packet)
-        self.current_packet_handler = self.handle_get_sink_info_list_reply
+        self.setup_reply(packet.id, self.handle_get_sink_info_list_reply, future)
 
 
     def send_packet(self, packet):
@@ -222,7 +256,14 @@ class NativeProtocol(asyncio.Protocol):
             packet.add_property('application.process.session_id', '232')
         packet.add_tag(Tag.STRING_NULL)
         self.send_packet(packet)
-        self.current_packet_handler = self.handle_properties_reply
+        self.setup_reply(packet.id, self.handle_properties_reply)
+
+
+    def send_server_info(self, future=None):
+        self.logger.debug("send_server_info")
+        packet = self.create_command_packet(Command.GET_SERVER_INFO)
+        self.send_packet(packet)
+        self.setup_reply(packet.id, self.handle_server_info_reply, future)
 
 
     def send_subscribe(self):
@@ -231,3 +272,7 @@ class NativeProtocol(asyncio.Protocol):
         packet.add_u32(SubscriptionMask.ALL)
         self.send_packet(packet)
         self.current_packet_handler = self.handle_subscribe_reply
+
+
+    def setup_reply(self, id, method, future=None):
+        self.reply_map[id] = (method, future)

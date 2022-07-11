@@ -1,12 +1,13 @@
 [tool.poetry]
 name = "pypactl"
-version = "0.1.0"
+version = "0.1.2"
 description = "Sends commands and gets information from PulseAudio."
 authors = ["Peter Haight <peterh@giantrabbit.com>"]
 license = "GPL-3.0-only"
 packages = [
   { include = "pypactl" },
 ]
+repository = "https://github.com/Dawnthorn/pypactl"
 
 [tool.poetry.dependencies]
 python = "^3.10"

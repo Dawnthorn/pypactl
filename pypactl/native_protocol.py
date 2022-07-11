@@ -7,6 +7,7 @@ import socket
 import struct
 
 from pypactl.command import Command
+from pypactl.event import Event
 from pypactl.packet import Packet
 from pypactl.protocol import Protocol
 from pypactl.server_info import ServerInfo
@@ -28,11 +29,13 @@ class NativeProtocol(asyncio.Protocol):
         self.logger = logger
         self.version = Protocol.VERSION
         self.reply_map = {}
+        self.subscribers = []
 
 
     def connection_lost(self, exception):
         self.logger.debug(f"connection_lost({exception})")
-        self.on_connection_lost.set_result(True)
+        if not self.on_connection_lost.cancelled():
+            self.on_connection_lost.set_result(True)
 
 
     def connection_made(self, transport):
@@ -145,15 +148,18 @@ class NativeProtocol(asyncio.Protocol):
 
 
     def handle_command_subscribe_event(self, packet):
-        event_info = packet.get_u32()
-        event_facility = SubscriptionEventType(event_info & SubscriptionEventType.FACILITY_MASK)
-        event_type = SubscriptionEventType(event_info & SubscriptionEventType.TYPE_MASK)
-        event_index = packet.get_u32()
-        self.logger.debug(f"handle_subscribe_event {event_info} {event_type} {event_facility} {event_index}")
+        event = Event()
+        event.info = packet.get_u32()
+        event.facility = SubscriptionEventType(event.info & SubscriptionEventType.FACILITY_MASK)
+        event.type = SubscriptionEventType(event.info & SubscriptionEventType.TYPE_MASK)
+        event.index = packet.get_u32()
+        self.logger.debug(f"handle_subscribe_event {event.info} {event.type} {event.facility} {event.index}")
+        for callback in self.subscribers:
+            callback(event)
 
 
     def handle_command_reply(self, packet):
-        method, future = self.reply_map.pop(packet.id, None)
+        method, future = self.reply_map.pop(packet.id, (None, None))
         if callable(method):
             result = method(packet)
             if future is not None:
@@ -266,13 +272,23 @@ class NativeProtocol(asyncio.Protocol):
         self.setup_reply(packet.id, self.handle_server_info_reply, future)
 
 
-    def send_subscribe(self):
+    def send_subscribe(self, future=None):
         self.logger.debug("send_subscribe")
         packet = self.create_command_packet(Command.SUBSCRIBE)
         packet.add_u32(SubscriptionMask.ALL)
         self.send_packet(packet)
-        self.current_packet_handler = self.handle_subscribe_reply
+        self.setup_reply(packet.id, self.handle_subscribe_reply, future)
 
 
     def setup_reply(self, id, method, future=None):
         self.reply_map[id] = (method, future)
+
+
+    def subscribe(self, callback):
+        if len(self.subscribers) == 0:
+            self.send_subscribe()
+        self.subscribers.append(callback)
+
+
+    def unsubscribe(self, callback):
+        self.subscribers.remove(callback)

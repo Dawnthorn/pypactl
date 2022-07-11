@@ -82,6 +82,11 @@ class Pypactl:
                 writer.write(f"\t\t{format}\n")
 
 
+    def on_pulse_audio_event(self, event):
+        self.logger.debug(f"on_pulse_audio_event({event})")
+        self.writer.write(f"{event}\n")
+
+
     async def run(self):
         self.loop = asyncio.get_running_loop()
         connection_lost = self.loop.create_future()
@@ -90,15 +95,23 @@ class Pypactl:
         prompt = self.loop.create_task(console.interact())
         try:
             done, pending = await asyncio.wait((connection_lost, prompt))
+        except BaseException:
+            connection_lost.cancel()
+            prompt.cancel()
         finally:
             self.transport.close()
 
 
     async def subscribe(self, reader, writer):
+        self.writer = writer
         self.logger.debug("subscribe")
+        self.protocol.subscribe(self.on_pulse_audio_event)
 
+
+def main():
+    pypactl = Pypactl()
+    asyncio.run(pypactl.run())
 
 
 if __name__ == "__main__":
-    pypactl = Pypactl()
-    asyncio.run(pypactl.run())
+    main()

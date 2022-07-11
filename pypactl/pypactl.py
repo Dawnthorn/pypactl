@@ -20,9 +20,12 @@ class Pypactl:
         parser = ArgumentParser()
         list_parser = ArgumentParser(description="List information about current PulseAudio state.")
         list_parser.add_argument('type_name', help="sinks")
+        set_default_sink_parser = ArgumentParser(description="Set default sink.")
+        set_default_sink_parser.add_argument('sink_name', help="Name of the sink to set as default.")
         commands = {
            "list": (self.list, list_parser),
            "info": (self.info, ArgumentParser(description="Server info.")),
+           "set-default-sink": (self.set_default_sink, set_default_sink_parser),
            "subscribe": (self.subscribe, ArgumentParser(description="Subcribe to events.")),
         }
         return Console(commands)
@@ -84,7 +87,7 @@ class Pypactl:
 
     def on_pulse_audio_event(self, event):
         self.logger.debug(f"on_pulse_audio_event({event})")
-        self.writer.write(f"{event}\n")
+        self.writer.write(f"{event.facility.name} {event.type.name}\n")
 
 
     async def run(self):
@@ -100,6 +103,12 @@ class Pypactl:
             prompt.cancel()
         finally:
             self.transport.close()
+
+
+    async def set_default_sink(self, reader, writer, sink_name):
+        future = self.loop.create_future()
+        self.protocol.send_set_default_sink(sink_name, future)
+        await future
 
 
     async def subscribe(self, reader, writer):

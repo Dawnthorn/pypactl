@@ -3,6 +3,7 @@ import logging
 import os
 import socket
 
+from pypactl.native_protocol import NativeProtocol
 from pypactl.native_transport import NativeTransport
 
 async def create_connection(loop, path = None, protocol_factory = None, logger = logging.getLogger('pypactl')):

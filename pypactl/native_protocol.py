@@ -7,6 +7,8 @@ import socket
 import struct
 
 from pypactl.command import Command
+from pypactl.command_error import CommandError
+from pypactl.error_code import ErrorCode
 from pypactl.event import Event
 from pypactl.packet import Packet
 from pypactl.protocol import Protocol
@@ -20,7 +22,7 @@ from pypactl.tag import Tag
 class NativeProtocol(asyncio.Protocol):
     FRAME_STRUCT = '!IIIII'
 
-    def __init__(self, on_connection_lost, logger = logging.getLogger('pypactl')):
+    def __init__(self, on_connection_lost=None, logger = logging.getLogger('pypactl')):
         self.buffer = memoryview(b'')
         self.expecting_frame = True
         self.expected_length = struct.calcsize(self.FRAME_STRUCT)
@@ -30,9 +32,16 @@ class NativeProtocol(asyncio.Protocol):
         self.version = Protocol.VERSION
         self.reply_map = {}
         self.subscribers = []
+        self.ready_listeners = []
+
+
+    def add_ready_listener(self, callback):
+        self.ready_listeners.append(callback)
 
 
     def connection_lost(self, exception):
+        if self.on_connection_lost is None:
+            return
         self.logger.debug(f"connection_lost({exception})")
         if not self.on_connection_lost.cancelled():
             self.on_connection_lost.set_result(True)
@@ -57,6 +66,35 @@ class NativeProtocol(asyncio.Protocol):
         return packet
 
 
+    def handle_auth_reply(self, packet):
+        self.logger.debug("handle_auth_reply")
+        self.version = packet.get_u32()
+        self.logger.debug(f"PulseAudio Server Protocol Version: {self.version}")
+        self.send_properties()
+
+
+    def handle_command_error(self, packet):
+        self.logger.debug("handle_command_error")
+        error_code = ErrorCode(packet.get_u32())
+        if not packet.id in self.reply_map:
+            self.logger.error(f"Recevied error {packet}, but there's no matching id in the reply_map.")
+            return
+        method, future = self.reply_map.pop(packet.id, (None, None))
+        future.set_exception(CommandError(f"There was an error executing command for packet {packet.id}: {error_code.name}.", error_code))
+
+
+    def handle_command_reply(self, packet):
+        if not packet.id in self.reply_map:
+            self.logger.error(f"Recevied reply {packet}, but there's no matching id in the reply_map.")
+            return
+        method, future = self.reply_map.pop(packet.id, (None, None))
+        result = None
+        if callable(method):
+            result = method(packet)
+        if future is not None:
+            future.set_result(result)
+
+
     def handle_data(self):
         self.logger.debug(f"handle_data {self.expected_length} {len(self.buffer)} {self.buffer}")
         while len(self.buffer) >= self.expected_length:
@@ -66,13 +104,6 @@ class NativeProtocol(asyncio.Protocol):
             else:
                 self.handle_packet(data)
             self.logger.debug(f"handle_data {self.expected_length} {len(self.buffer)} {self.buffer}")
-
-
-    def handle_auth_reply(self, packet):
-        self.logger.debug("handle_auth_reply")
-        self.version = packet.get_u32()
-        self.logger.debug(f"PulseAudio Server Protocol Version: {self.version}")
-        self.send_properties()
 
 
     def handle_frame(self, data):
@@ -158,19 +189,12 @@ class NativeProtocol(asyncio.Protocol):
             callback(event)
 
 
-    def handle_command_reply(self, packet):
-        method, future = self.reply_map.pop(packet.id, (None, None))
-        if callable(method):
-            result = method(packet)
-            if future is not None:
-                future.set_result(result)
-        else:
-            self.logger.error(f"Recevied reply {packet}, but there's no matching id in the reply_map.")
-
 
     def handle_properties_reply(self, packet):
         self.logger.debug("handle_properties_reply")
         command_id = packet.get_u32()
+        for callback in self.ready_listeners:
+            callback()
 
 
     def handle_server_info_reply(self, packet):
@@ -270,6 +294,14 @@ class NativeProtocol(asyncio.Protocol):
         packet = self.create_command_packet(Command.GET_SERVER_INFO)
         self.send_packet(packet)
         self.setup_reply(packet.id, self.handle_server_info_reply, future)
+
+
+    def send_set_default_sink(self, sink_name, future=None):
+        self.logger.debug(f"send_set_default_sink({sink_name}")
+        packet = self.create_command_packet(Command.SET_DEFAULT_SINK)
+        packet.add_string(sink_name)
+        self.send_packet(packet)
+        self.setup_reply(packet.id, None, future)
 
 
     def send_subscribe(self, future=None):

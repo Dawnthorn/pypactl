@@ -79,20 +79,20 @@ class NativeProtocol(asyncio.Protocol):
         if not packet.id in self.reply_map:
             self.logger.error(f"Recevied error {packet}, but there's no matching id in the reply_map.")
             return
-        method, future = self.reply_map.pop(packet.id, (None, None))
-        future.set_exception(CommandError(f"There was an error executing command for packet {packet.id}: {error_code.name}.", error_code))
+        method, callback = self.reply_map.pop(packet.id, (None, None))
+        raise CommandError(f"There was an error executing command for packet {packet.id}: {error_code.name}.", error_code)
 
 
     def handle_command_reply(self, packet):
         if not packet.id in self.reply_map:
             self.logger.error(f"Recevied reply {packet}, but there's no matching id in the reply_map.")
             return
-        method, future = self.reply_map.pop(packet.id, (None, None))
+        method, callback = self.reply_map.pop(packet.id, (None, None))
         result = None
         if callable(method):
             result = method(packet)
-        if future is not None:
-            future.set_result(result)
+        if callback is not None:
+            callback(result)
 
 
     def handle_data(self):
@@ -113,6 +113,7 @@ class NativeProtocol(asyncio.Protocol):
 
 
     def handle_get_sink_info_list_reply(self, packet):
+        self.logger.debug(f"handle_get_sink_info_list_reply")
         self.current_packet_handler = None
         sink_infos = []
         while len(packet.data) > 0:
@@ -252,10 +253,11 @@ class NativeProtocol(asyncio.Protocol):
         self.setup_reply(packet.id, self.handle_auth_reply)
 
 
-    def send_get_sink_info_list(self, future = None):
+    def send_get_sink_info_list(self, callback = None):
+        self.logger.debug(f"send_get_sink_info_list {callback}")
         packet = self.create_command_packet(Command.GET_SINK_INFO_LIST)
         self.send_packet(packet)
-        self.setup_reply(packet.id, self.handle_get_sink_info_list_reply, future)
+        self.setup_reply(packet.id, self.handle_get_sink_info_list_reply, callback)
 
 
     def send_packet(self, packet):
@@ -289,34 +291,34 @@ class NativeProtocol(asyncio.Protocol):
         self.setup_reply(packet.id, self.handle_properties_reply)
 
 
-    def send_server_info(self, future=None):
+    def send_server_info(self, callback=None):
         self.logger.debug("send_server_info")
         packet = self.create_command_packet(Command.GET_SERVER_INFO)
         self.send_packet(packet)
-        self.setup_reply(packet.id, self.handle_server_info_reply, future)
+        self.setup_reply(packet.id, self.handle_server_info_reply, callback)
 
 
-    def send_set_default_sink(self, sink_name, future=None):
+    def send_set_default_sink(self, sink_name, callback=None):
         self.logger.debug(f"send_set_default_sink({sink_name}")
         packet = self.create_command_packet(Command.SET_DEFAULT_SINK)
         packet.add_string(sink_name)
         self.send_packet(packet)
-        self.setup_reply(packet.id, None, future)
+        self.setup_reply(packet.id, None, callback)
 
 
-    def send_subscribe(self, future=None):
+    def send_subscribe(self, callback=None):
         self.logger.debug("send_subscribe")
         packet = self.create_command_packet(Command.SUBSCRIBE)
         packet.add_u32(SubscriptionMask.ALL)
         self.send_packet(packet)
-        self.setup_reply(packet.id, self.handle_subscribe_reply, future)
+        self.setup_reply(packet.id, self.handle_subscribe_reply, callback)
 
 
-    def setup_reply(self, id, method, future=None):
-        self.reply_map[id] = (method, future)
+    def setup_reply(self, id, method, callback=None):
+        self.reply_map[id] = (method, callback)
 
 
-    def subscribe(self, callback):
+    def subscribe(self, callback=None):
         if len(self.subscribers) == 0:
             self.send_subscribe()
         self.subscribers.append(callback)

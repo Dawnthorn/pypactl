@@ -1,12 +1,12 @@
 import argparse
 import asyncio
 import logging
+import aioconsole.stream
 
 from aioconsole import AsynchronousCli
 from argparse import ArgumentParser
 from pypactl.console import Console
-from pypactl.native_protocol import NativeProtocol
-from pypactl.loop import create_connection
+from pypactl.controller import Controller
 from pypactl.protocol import Protocol
 
 class Pypactl:
@@ -16,7 +16,7 @@ class Pypactl:
         self.logger.setLevel(logging.ERROR)
 
 
-    def create_console(self, streams=None):
+    def create_console(self):
         parser = ArgumentParser()
         list_parser = ArgumentParser(description="List information about current PulseAudio state.")
         list_parser.add_argument('type_name', help="sinks")
@@ -33,9 +33,7 @@ class Pypactl:
 
     async def info(self, reader, writer):
         self.logger.debug("info")
-        future = self.loop.create_future()
-        self.protocol.send_server_info(future)
-        server_info = await future
+        server_info = await self.controller.server_info()
         writer.write(f"Server String: {self.transport.path}\n")
         writer.write(f"Library Protocol Version: {Protocol.VERSION}\n")
         writer.write(f"Server Protocol Version: {self.protocol.version}\n")
@@ -55,33 +53,31 @@ class Pypactl:
 
     async def list(self, reader, writer, type_name=None):
         self.logger.debug("list")
-        future = self.loop.create_future()
-        self.protocol.send_get_sink_info_list(future)
-        sink_infos = await future
-        for sink_info in sink_infos:
-            writer.write(f"Sink #{sink_info.index}\n")
-            writer.write(f"\tState: {sink_info.state}\n")
-            writer.write(f"\tName: {sink_info.name}\n")
-            writer.write(f"\tDescription: {sink_info.description}\n")
-            writer.write(f"\tDriver: {sink_info.driver}\n")
-            writer.write(f"\tSample Spec: {sink_info.sample_spec}\n")
-            writer.write(f"\tChannel Map: {sink_info.channel_map}\n")
-            writer.write(f"\tOwner Module: {sink_info.owner_module}\n")
-            writer.write(f"\tMute: {sink_info.mute}\n")
-            writer.write(f"\tVolume: {sink_info.volume}\n")
-            writer.write(f"\tMonitor Source: {sink_info.monitor_source}\n")
-            writer.write(f"\tBase Volume: {sink_info.base_volume}\n")
-            writer.write(f"\tLatency: {sink_info.latency}\n")
-            writer.write(f"\tFlags: {sink_info.flags}\n")
+        sinks = await self.controller.sinks()
+        for sink in sinks:
+            writer.write(f"Sink #{sink.index}\n")
+            writer.write(f"\tState: {sink.state}\n")
+            writer.write(f"\tName: {sink.name}\n")
+            writer.write(f"\tDescription: {sink.description}\n")
+            writer.write(f"\tDriver: {sink.driver}\n")
+            writer.write(f"\tSample Spec: {sink.sample_spec}\n")
+            writer.write(f"\tChannel Map: {sink.channel_map}\n")
+            writer.write(f"\tOwner Module: {sink.owner_module}\n")
+            writer.write(f"\tMute: {sink.mute}\n")
+            writer.write(f"\tVolume: {sink.volume}\n")
+            writer.write(f"\tMonitor Source: {sink.monitor_source}\n")
+            writer.write(f"\tBase Volume: {sink.base_volume}\n")
+            writer.write(f"\tLatency: {sink.latency}\n")
+            writer.write(f"\tFlags: {sink.flags}\n")
             writer.write(f"\tProperties:\n")
-            for key, value in sink_info.proplist.items():
+            for key, value in sink.proplist.items():
                 writer.write(f"\t\t{key} = {value}\n")
             writer.write(f"\tPorts:\n")
-            for port in sink_info.ports:
+            for port in sink.ports:
                 writer.write(f"\t\t{port}\n")
-            writer.write(f"\tActive Port: {sink_info.active_port.name}\n")
+            writer.write(f"\tActive Port: {sink.active_port.name}\n")
             writer.write(f"\tFormats:\n")
-            for format in sink_info.formats:
+            for format in sink.formats:
                 writer.write(f"\t\t{format}\n")
 
 
@@ -92,29 +88,26 @@ class Pypactl:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        connection_lost = self.loop.create_future()
-        self.protocol, self.transport = await create_connection(self.loop, protocol_factory=lambda logger=None: NativeProtocol(connection_lost), logger=self.logger)
+        self.controller = Controller(self.loop)
+        await self.controller.start()
         console = self.create_console()
         prompt = self.loop.create_task(console.interact())
         try:
-            done, pending = await asyncio.wait((connection_lost, prompt))
+            await asyncio.ensure_future(prompt)
         except BaseException:
-            connection_lost.cancel()
             prompt.cancel()
         finally:
-            self.transport.close()
+            self.controller.close()
 
 
     async def set_default_sink(self, reader, writer, sink_name):
-        future = self.loop.create_future()
-        self.protocol.send_set_default_sink(sink_name, future)
-        await future
+        await self.controller.set_default_sink(sink_name)
 
 
     async def subscribe(self, reader, writer):
         self.writer = writer
         self.logger.debug("subscribe")
-        self.protocol.subscribe(self.on_pulse_audio_event)
+        self.controller.subscribe(self.on_pulse_audio_event)
 
 
 def main():

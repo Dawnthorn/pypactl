@@ -34,9 +34,9 @@ class Pypactl:
     async def info(self, reader, writer):
         self.logger.debug("info")
         server_info = await self.controller.server_info()
-        writer.write(f"Server String: {self.transport.path}\n")
+        writer.write(f"Server String: {self.controller.transport.path}\n")
         writer.write(f"Library Protocol Version: {Protocol.VERSION}\n")
-        writer.write(f"Server Protocol Version: {self.protocol.version}\n")
+        writer.write(f"Server Protocol Version: {self.controller.protocol.version}\n")
         writer.write(f"Is Local: yes\n")
         writer.write(f"Client Index:\n")
         writer.write(f"Tile Size:\n")

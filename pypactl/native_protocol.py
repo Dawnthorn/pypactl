@@ -253,6 +253,13 @@ class NativeProtocol(asyncio.Protocol):
         self.setup_reply(packet.id, self.handle_auth_reply)
 
 
+    def send_get_server_info(self, callback=None):
+        self.logger.debug("send_server_info")
+        packet = self.create_command_packet(Command.GET_SERVER_INFO)
+        self.send_packet(packet)
+        self.setup_reply(packet.id, self.handle_server_info_reply, callback)
+
+
     def send_get_sink_info_list(self, callback = None):
         self.logger.debug(f"send_get_sink_info_list {callback}")
         packet = self.create_command_packet(Command.GET_SINK_INFO_LIST)
@@ -289,13 +296,6 @@ class NativeProtocol(asyncio.Protocol):
         packet.add_tag(Tag.STRING_NULL)
         self.send_packet(packet)
         self.setup_reply(packet.id, self.handle_properties_reply)
-
-
-    def send_server_info(self, callback=None):
-        self.logger.debug("send_server_info")
-        packet = self.create_command_packet(Command.GET_SERVER_INFO)
-        self.send_packet(packet)
-        self.setup_reply(packet.id, self.handle_server_info_reply, callback)
 
 
     def send_set_default_sink(self, sink_name, callback=None):
